@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Powerball Predictive Analysis Dashboard (Heatmap)</title>
+    <!-- Load Tailwind CSS for modern, responsive styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.1/dist/chart.min.js"></script>
     <style>
@@ -38,6 +39,10 @@
             z-index: 10;
             color: white;
             text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+        }
+        .heat-cell:hover .tooltip {
+            visibility: visible;
+            opacity: 1;
         }
         .heat-cell:hover {
             transform: scale(1.05);
@@ -107,31 +112,108 @@
                 font-size: 0.75rem;
             }
         }
+
+        /* Subtle pulsating animation for the Predict button on load */
+        @keyframes pulse-once {
+            0% { transform: scale(1); box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); }
+            50% { transform: scale(1.05); box-shadow: 0 8px 15px rgba(220, 38, 38, 0.5); }
+            100% { transform: scale(1); box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); }
+        }
+        .pulse-button {
+            animation: pulse-once 1.5s ease-out 0.5s 1;
+        }
+
+        /* --- START CUSTOM SLIDER STYLING (Modern Filled-Track UX) --- */
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent; /* Required for custom track styling */
+            margin: 10px 0;
+        }
+
+        /* Track styling (Chrome/Safari/Firefox) - Added border-radius to ensure rounded ends */
+        input[type=range]::-webkit-slider-runnable-track,
+        input[type=range]::-moz-range-track {
+            width: 100%;
+            height: 8px; /* Slightly thicker track */
+            cursor: pointer;
+            background: #d1d5db; /* Default gray track. Will be overwritten by JS linear-gradient */
+            border-radius: 4px; /* Ensured rounded ends */
+            box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        /* Thumb styling (Chrome/Safari) - Prominent Blue Thumb */
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 24px;
+            width: 24px;
+            border-radius: 50%;
+            background: #0077b6; /* Powerball Blue thumb */
+            cursor: grab;
+            margin-top: -8px; /* Adjust vertical position for 8px track */
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            border: 3px solid #ffffff; /* White border for contrast */
+            transition: background 0.2s, box-shadow 0.2s;
+        }
+
+        input[type=range]:active::-webkit-slider-thumb {
+            cursor: grabbing;
+            background: #005f99; /* Darker blue when active */
+            box-shadow: 0 2px 10px rgba(217, 0, 0, 0.5); /* Red hint when dragging */
+        }
+
+        /* Thumb styling (Firefox) - Prominent Blue Thumb */
+        input[type=range]::-moz-range-thumb {
+            height: 24px;
+            width: 24px;
+            border-radius: 50%;
+            background: #0077b6; /* Powerball Blue thumb */
+            cursor: grab;
+            border: 3px solid #ffffff;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
+        /* --- END CUSTOM SLIDER STYLING --- */
     </style>
 </head>
 <body class="p-4 sm:p-8">
 
 <div class="dashboard-container max-w-7xl mx-auto bg-white p-6 sm:p-10 rounded-xl">
     <h1 class="text-3xl font-extrabold mb-2 text-center">Powerball Predictive Dashboard </h1>
-    <p class="text-center text-gray-500 mb-8 text-sm"><span id="analysisPeriodInfo">Analysis of the last 87 draws (Approx. Nov 2024 - Jul 16, 2025).</span> **Total Draws Analyzed: <span id="drawCountDisplay">87</span>**</p>
+    <!-- Removed old analysis info text from here -->
 
+    <!-- INTERACTIVE CONTROLS SECTION -->
     <div class="mb-8 p-4 bg-yellow-50 rounded-xl border border-yellow-200">
-        <h2 class="text-xl font-semibold mb-4 text-center text-yellow-800">Custom Analysis & Prediction Tools</h2>
+        <h2 class="text-xl font-semibold mb-4 text-center text-yellow-800">🔮 Predict the Next Winning Numbers</h2>
         
+        <!-- 1. Draw Count Slider (Enhanced with filled track) -->
         <div class="mb-6">
-            <label for="drawCountSlider" class="block text-lg font-medium text-gray-700 mb-2">Analyze Last <span id="sliderValue">87</span> Draws:</label>
-            <input type="range" id="drawCountSlider" min="10" max="87" value="87" step="1" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+            <label for="drawCountSlider" class="block text-lg font-medium text-gray-700 mb-4 text-center">
+                # of previous draws to analyze: 
+                <span id="sliderValue" class="text-red-600 font-extrabold text-2xl">87</span>
+            </label>
+            
+            <div class="relative px-2">
+                <input type="range" id="drawCountSlider" min="10" max="87" value="87" step="1" class="w-full">
+            </div>
+            <!-- Min/Max labels removed -->
         </div>
 
+        <!-- 2. Prediction Generator -->
         <div class="flex flex-col sm:flex-row items-center justify-center gap-4 border-t pt-4 mt-4">
-            <button id="generateTicketBtn" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-6 rounded-lg shadow-lg transition duration-200 flex items-center justify-center w-full sm:w-auto">
-                 Generate Suggested Ticket
+            <button id="generateTicketBtn" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-6 rounded-lg shadow-lg transition duration-200 flex items-center justify-center w-full sm:w-auto pulse-button">
+                 Predict
             </button>
             <div id="suggestedTicketOutput" class="mt-4 sm:mt-0 p-3 bg-gray-100 rounded-lg text-center w-full sm:w-auto min-h-[50px] flex items-center justify-center text-gray-700">
-                Click to generate a balanced prediction!
+                Next Winning Numbers!
             </div>
         </div>
+        <!-- Analysis info text moved and shortened here -->
+        <p id="analysisPeriodInfo" class="text-center text-gray-500 mt-4 text-sm"></p>
     </div>
+    <!-- END INTERACTIVE CONTROLS SECTION -->
+
+
+    <!-- 1. Frequency Analysis (Heatmap) - Full Width -->
     <div class="p-6 rounded-lg border border-gray-100 mb-6">
         <h2 class="text-2xl font-semibold mb-4 text-center">1. Number Frequency Analysis (Heatmap)</h2>
         <div class="flex justify-center items-center gap-4 text-sm font-medium mb-6">
@@ -142,21 +224,25 @@
 
         <h3 class="text-xl font-medium text-center text-gray-700 mb-3">White Balls (1-69)</h3>
         <div id="whiteBallHeatmap" class="grid white-ball-grid gap-2 p-2 bg-blue-50 rounded-lg">
-            </div>
+            <!-- White Ball Cells Rendered Here -->
+        </div>
         
         <h3 class="text-xl font-medium text-center text-gray-700 mt-8 mb-3">Powerballs (1-26)</h3>
         <div id="powerBallHeatmap" class="grid powerball-grid gap-2 p-2 bg-red-50 rounded-lg">
-            </div>
+            <!-- Powerball Cells Rendered Here -->
+        </div>
 
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
+        <!-- 2. Gaps/Recency Analysis -->
         <div class="p-6 rounded-lg border border-gray-100">
             <h2 class="text-2xl font-semibold mb-4 text-center">2. Recency Analysis (Draws Since Last Seen)</h2>
             <p class="text-center text-sm text-gray-500 mb-4">Top 10 Coldest Numbers Overall (Highest Draws Ago)</p>
             <div id="recencyTable"></div>
         </div>
 
+        <!-- 3. Pair/Combination Analysis -->
         <div class="p-6 rounded-lg border border-gray-100">
             <h2 class="text-2xl font-semibold mb-4 text-center">3. Top 10 White Ball Pairs</h2>
             <p class="text-center text-sm text-gray-500 mb-4">Most frequently drawn pairs</p>
@@ -173,7 +259,7 @@
     const rawData = [
         ["11/02/2024", 22, 34, 40, 52, 60, 15], ["11/04/2024", 1, 19, 28, 33, 56, 12], ["11/06/2024", 10, 11, 23, 44, 58, 26], 
         ["11/09/2024", 14, 15, 29, 39, 41, 18], ["11/11/2024", 5, 20, 26, 47, 51, 9], ["11/13/2024", 3, 17, 30, 48, 62, 21], 
-        ["11/16/2024", 16, 24, 35, 43, 63, 7], ["11/18/2024", 8, 12, 27, 32, 59, 11], ["11/20/2024", 2, 9, 36, 45, 66, 1], 
+        ["11/16/2022", 16, 24, 35, 43, 63, 7], ["11/18/2024", 8, 12, 27, 32, 59, 11], ["11/20/2024", 2, 9, 36, 45, 66, 1], 
         ["11/23/2024", 13, 21, 31, 46, 67, 24], ["11/25/2024", 7, 18, 25, 38, 54, 4], ["11/27/2024", 6, 22, 37, 49, 68, 16], 
         ["11/30/2024", 4, 10, 17, 26, 50, 23], ["12/02/2024", 1, 14, 28, 41, 52, 5], ["12/04/2024", 15, 20, 33, 44, 56, 19], 
         ["12/07/2024", 11, 23, 34, 55, 60, 20], ["12/09/2024", 3, 16, 29, 39, 47, 12], ["12/11/2024", 8, 13, 30, 48, 62, 17], 
@@ -213,6 +299,29 @@
     const reversedRawData = rawData.reverse();
     const maxDraws = reversedRawData.length; 
     let currentDrawCount = maxDraws; // Start with all draws
+
+    // --------------------------------------------------------------------------------
+    // UTILITY: SLIDER TRACK VISUAL UPDATE
+    // --------------------------------------------------------------------------------
+
+    /**
+     * Updates the background of the range slider to visually fill the track
+     * up to the current thumb position using a CSS linear gradient.
+     */
+    function updateSliderBackground(slider) {
+        const min = parseInt(slider.min) || 0;
+        const max = parseInt(slider.max) || 100;
+        const val = parseInt(slider.value);
+        
+        // Calculate percentage value for the background gradient
+        const percentage = ((val - min) / (max - min)) * 100;
+
+        const fill = '#0077b6'; // Powerball Blue for the fill
+        const track = '#d1d5db'; // Light gray for the un-filled track
+
+        // Apply linear gradient: fill color up to percentage, then track color
+        slider.style.background = `linear-gradient(to right, ${fill} 0%, ${fill} ${percentage}%, ${track} ${percentage}%, ${track} 100%)`;
+    }
 
     // --------------------------------------------------------------------------------
     // STEP 2: CALCULATIONS AND DATA PROCESSING
@@ -270,7 +379,7 @@
                 // If never seen in this draw subset
                 recency.set(num, totalDraws);
             } else {
-                // Draws ago = index of the last draw - index of the draw it was seen in
+                // Draws ago = index of the draw it was seen in
                 recency.set(num, lastSeenIndex);
             }
         }
@@ -526,6 +635,8 @@
 
     // Main function to initialize or update the dashboard
     function initDashboard(drawCount) {
+        const slider = document.getElementById('drawCountSlider');
+        
         // Ensure drawCount is within limits
         const actualDrawCount = Math.min(Math.max(10, drawCount), maxDraws);
 
@@ -536,12 +647,13 @@
         const stats = calculateStatistics(dataSubset);
 
         // 3. Update UI text
-        document.getElementById('drawCountDisplay').textContent = actualDrawCount;
+        // Only update the slider value and period info text
         document.getElementById('sliderValue').textContent = actualDrawCount;
         
-        // Update period info (Date calculation is complex, so we'll just show the count)
         const startDate = dataSubset.length > 0 ? dataSubset[dataSubset.length - 1][0] : 'N/A';
         const endDate = dataSubset.length > 0 ? dataSubset[0][0] : 'N/A';
+        
+        // Updated info text format (shortened and moved)
         document.getElementById('analysisPeriodInfo').textContent = `Analysis of the last ${actualDrawCount} draws (Dates: ${startDate} - ${endDate}).`;
 
 
@@ -549,12 +661,16 @@
         renderFrequencyHeatmap(stats);
         renderRecencyTable(stats);
         renderPairAnalysisTable(stats);
+
+        // 5. Update slider visual
+        updateSliderBackground(slider);
     }
 
 
     document.addEventListener('DOMContentLoaded', () => {
         const slider = document.getElementById('drawCountSlider');
         const generateBtn = document.getElementById('generateTicketBtn');
+        const outputDiv = document.getElementById('suggestedTicketOutput');
         
         // Set up the slider properties
         slider.setAttribute('max', maxDraws);
@@ -565,7 +681,7 @@
             const newCount = parseInt(event.target.value, 10);
             initDashboard(newCount);
             // Reset prediction output when analysis scope changes
-            document.getElementById('suggestedTicketOutput').innerHTML = 'Click to generate a balanced prediction!';
+            outputDiv.innerHTML = 'Next Winning Numbers!'; 
         });
 
         // Event Listener for the prediction button
