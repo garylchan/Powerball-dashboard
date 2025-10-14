@@ -113,7 +113,7 @@
             }
         }
 
-        /* Subtle pulsating animation for the Predict button on load */
+        /* Subtle pulsating animation for the Predict button on initial load */
         @keyframes pulse-once {
             0% { transform: scale(1); box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); }
             50% { transform: scale(1.05); box-shadow: 0 8px 15px rgba(220, 38, 38, 0.5); }
@@ -121,6 +121,18 @@
         }
         .pulse-button {
             animation: pulse-once 1.5s ease-out 0.5s 1;
+        }
+
+        /* Continuous pulse cue for the Predict button after slider move */
+        @keyframes cue-pulse {
+            0% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4); }
+            70% { box-shadow: 0 0 0 10px rgba(220, 38, 38, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
+        }
+        .needs-update-cue {
+            animation: cue-pulse 1.5s infinite;
+            border: 3px solid #d90000; /* Red border to indicate required action */
+            transform: scale(1.02);
         }
 
         /* --- START CUSTOM SLIDER STYLING (Modern Filled-Track UX) --- */
@@ -179,7 +191,6 @@
 
 <div class="dashboard-container max-w-7xl mx-auto bg-white p-6 sm:p-10 rounded-xl">
     <h1 class="text-3xl font-extrabold mb-2 text-center">Powerball Predictive Dashboard </h1>
-    <!-- Removed old analysis info text from here -->
 
     <!-- INTERACTIVE CONTROLS SECTION -->
     <div class="mb-8 p-4 bg-yellow-50 rounded-xl border border-yellow-200">
@@ -188,14 +199,13 @@
         <!-- 1. Draw Count Slider (Enhanced with filled track) -->
         <div class="mb-6">
             <label for="drawCountSlider" class="block text-lg font-medium text-gray-700 mb-4 text-center">
-                # of previous draws to analyze: 
+                Move the slider to select # of previous draws to analyze: 
                 <span id="sliderValue" class="text-red-600 font-extrabold text-2xl">87</span>
             </label>
             
             <div class="relative px-2">
                 <input type="range" id="drawCountSlider" min="10" max="87" value="87" step="1" class="w-full">
             </div>
-            <!-- Min/Max labels removed -->
         </div>
 
         <!-- 2. Prediction Generator -->
@@ -525,6 +535,13 @@
     // --------------------------------------------------------------------------------
 
     function generateSuggestedTicket() {
+        const generateBtn = document.getElementById('generateTicketBtn');
+        const outputDiv = document.getElementById('suggestedTicketOutput');
+
+        // Remove the visual cue as the prediction is being processed
+        generateBtn.classList.remove('needs-update-cue');
+        
+        // Start calculation (Analysis data has already been updated in initDashboard)
         const { frequencyData, recencyData } = currentStats;
 
         // 1. Separate White Balls (WB) and Powerballs (PB)
@@ -615,7 +632,6 @@
 
 
         // 3. Render Output
-        const outputDiv = document.getElementById('suggestedTicketOutput');
         
         const wbHtml = finalWB.map(n => `<span class="ball-display wb-ball">${n}</span>`).join('');
         const pbHtml = `<span class="ball-display pb-ball">${finalPB}</span>`;
@@ -634,26 +650,25 @@
     // --------------------------------------------------------------------------------
 
     // Main function to initialize or update the dashboard
-    function initDashboard(drawCount) {
+    function initDashboard(drawCount, updateAnalysis = true) {
         const slider = document.getElementById('drawCountSlider');
         
         // Ensure drawCount is within limits
         const actualDrawCount = Math.min(Math.max(10, drawCount), maxDraws);
+        currentDrawCount = actualDrawCount;
 
         // 1. Get the relevant data subset (most recent 'actualDrawCount' draws)
         const dataSubset = reversedRawData.slice(0, actualDrawCount);
 
-        // 2. Recalculate all statistics
+        // 2. Recalculate all statistics (Analysis)
         const stats = calculateStatistics(dataSubset);
 
         // 3. Update UI text
-        // Only update the slider value and period info text
         document.getElementById('sliderValue').textContent = actualDrawCount;
         
         const startDate = dataSubset.length > 0 ? dataSubset[dataSubset.length - 1][0] : 'N/A';
         const endDate = dataSubset.length > 0 ? dataSubset[0][0] : 'N/A';
         
-        // Updated info text format (shortened and moved)
         document.getElementById('analysisPeriodInfo').textContent = `Analysis of the last ${actualDrawCount} draws (Dates: ${startDate} - ${endDate}).`;
 
 
@@ -661,7 +676,7 @@
         renderFrequencyHeatmap(stats);
         renderRecencyTable(stats);
         renderPairAnalysisTable(stats);
-
+        
         // 5. Update slider visual
         updateSliderBackground(slider);
     }
@@ -676,19 +691,49 @@
         slider.setAttribute('max', maxDraws);
         slider.value = maxDraws; // Default to all available draws
 
-        // Event Listener for the slider
+        // Event Listener for the slider (Input fires continuously during drag)
         slider.addEventListener('input', (event) => {
             const newCount = parseInt(event.target.value, 10);
-            initDashboard(newCount);
-            // Reset prediction output when analysis scope changes
-            outputDiv.innerHTML = 'Next Winning Numbers!'; 
+            
+            // 1. Only update the slider label and background on input
+            document.getElementById('sliderValue').textContent = newCount;
+            updateSliderBackground(slider);
+            
+            // 2. Add visual cue to the button
+            generateBtn.classList.add('needs-update-cue');
+            
+            // 3. Reset the prediction output to prompt the user
+            outputDiv.innerHTML = 'Analysis updated. Click Predict!';
+            
+            // 4. Update the core analysis data immediately, without re-rendering prediction
+            // This makes the heatmaps and tables update live, but keeps the prediction a separate click.
+            const dataSubset = reversedRawData.slice(0, newCount);
+            calculateStatistics(dataSubset);
+            
+            // Update the period info text as well
+            const startDate = dataSubset.length > 0 ? dataSubset[dataSubset.length - 1][0] : 'N/A';
+            const endDate = dataSubset.length > 0 ? dataSubset[0][0] : 'N/A';
+            document.getElementById('analysisPeriodInfo').textContent = `Analysis of the last ${newCount} draws (Dates: ${startDate} - ${endDate}).`;
+            
+            renderFrequencyHeatmap(currentStats);
+            renderRecencyTable(currentStats);
+            renderPairAnalysisTable(currentStats);
         });
 
-        // Event Listener for the prediction button
-        generateBtn.addEventListener('click', generateSuggestedTicket);
+        // Event Listener for the prediction button (Click)
+        generateBtn.addEventListener('click', () => {
+             // 1. Remove the visual cue
+            generateBtn.classList.remove('needs-update-cue');
+            
+            // 2. Generate the ticket based on the CURRENT analysis data
+            generateSuggestedTicket();
+        });
 
         // Initial load of the dashboard (with max draws)
         initDashboard(maxDraws);
+        
+        // Initial button pulse cue (removed after first click)
+        generateBtn.classList.add('pulse-button');
     });
 
 </script>
