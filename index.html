@@ -1,743 +1,298 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Powerball Predictive Analysis Dashboard (Heatmap)</title>
-    <!-- Load Tailwind CSS for modern, responsive styling -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.1/dist/chart.min.js"></script>
-    <style>
-        /* Custom styles to integrate with Tailwind and ensure aesthetics */
-        body {
-            font-family: 'Inter', sans-serif;
-            background-color: #f4f7f9;
+import React, { useState, useEffect, useMemo } from 'react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'; // Added ReferenceLine
+
+// --- Utility Functions for Data Analysis ---
+
+/**
+ * Parses the raw CSV text data into a structured array of draw objects.
+ * @param {string} csvText - The raw content of the CSV file.
+ * @returns {Array<{date: string, numbers: number[], powerball: number, multiplier: number}>}
+ */
+const parseCsvData = (csvText) => {
+    const lines = csvText.split('\n');
+    // Skip the header row and any empty lines
+    const dataLines = lines.slice(1).filter(line => line.trim().length > 0);
+
+    return dataLines.map(line => {
+        // Example line: "09/26/2020,11 21 27 36 62 24,3"
+        const parts = line.split(',');
+        if (parts.length < 3) return null;
+
+        const date = parts[0].trim();
+        const numbersString = parts[1].trim();
+        const multiplier = parseInt(parts[2].trim(), 10) || 0;
+
+        const allNumbers = numbersString.split(' ').map(n => parseInt(n.trim(), 10)).filter(n => !isNaN(n));
+
+        if (allNumbers.length === 6) {
+            // The first 5 are white balls, the last one is the Powerball
+            const numbers = allNumbers.slice(0, 5);
+            const powerball = allNumbers[5];
+
+            return {
+                date,
+                numbers, // Array of 5 main numbers
+                powerball, // Single powerball number
+                multiplier
+            };
         }
-        .dashboard-container {
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-        }
-        h1 {
-            color: #d90000; /* Powerball Red */
-        }
-        h2 {
-            color: #0077b6; /* Powerball Blue */
-        }
-        .heat-cell {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            height: 45px;
-            width: 100%;
-            border-radius: 8px;
-            font-weight: 700;
-            transition: all 0.3s ease;
-            cursor: default;
-            position: relative;
-            overflow: hidden;
-        }
-        .heat-cell span {
-            z-index: 10;
-            color: white;
-            text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
-        }
-        .heat-cell:hover .tooltip {
-            visibility: visible;
-            opacity: 1;
-        }
-        .heat-cell:hover {
-            transform: scale(1.05);
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
-        }
-        .tooltip {
-            visibility: hidden;
-            width: 120px;
-            background-color: #333;
-            color: #fff;
-            text-align: center;
-            border-radius: 6px;
-            padding: 5px 0;
-            position: absolute;
-            z-index: 20;
-            bottom: 120%;
-            left: 50%;
-            margin-left: -60px;
-            opacity: 0;
-            transition: opacity 0.3s;
-        }
-        .heat-cell:hover .tooltip {
-            visibility: visible;
-            opacity: 1;
-        }
-        .white-ball-num {
-            color: #333;
-            font-weight: bold;
-        }
-        .powerball-num {
-            color: #d90000;
-            font-weight: bold;
-        }
-        /* Grid for heatmap: 10 columns for numbers 1-69/1-26 */
-        .white-ball-grid {
-            grid-template-columns: repeat(10, minmax(0, 1fr));
-        }
-        .powerball-grid {
-            grid-template-columns: repeat(10, minmax(0, 1fr));
-        }
-        .ball-display {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            font-weight: bold;
-            color: white;
-            margin: 0 4px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-        }
-        .wb-ball { background-color: #0077b6; }
-        .pb-ball { background-color: #d90000; }
+        return null;
+    }).filter(draw => draw !== null); // Filter out any invalid lines
+};
 
-        @media (max-width: 640px) {
-             /* Adjust grid for mobile */
-            .white-ball-grid, .powerball-grid {
-                grid-template-columns: repeat(7, minmax(0, 1fr));
-            }
-             .heat-cell {
-                height: 40px;
-            }
-            .ball-display {
-                width: 30px;
-                height: 30px;
-                font-size: 0.75rem;
-            }
-        }
+/**
+ * Calculates the frequency of each main number and Powerball number.
+ * @param {Array<{numbers: number[], powerball: number}>} draws - The parsed draw data.
+ * @returns {{mainFrequencies: Array<{name: number, count: number}>, powerballFrequencies: Array<{name: number, count: number}>}}
+ */
+const calculateFrequencies = (draws) => {
+    const mainCounts = {};
+    const powerballCounts = {};
 
-        /* Subtle pulsating animation for the Predict button on initial load */
-        @keyframes pulse-once {
-            0% { transform: scale(1); box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); }
-            50% { transform: scale(1.05); box-shadow: 0 8px 15px rgba(220, 38, 38, 0.5); }
-            100% { transform: scale(1); box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); }
-        }
-        .pulse-button {
-            animation: pulse-once 1.5s ease-out 0.5s 1;
-        }
-
-        /* Continuous pulse cue for the Predict button after slider move */
-        @keyframes cue-pulse {
-            0% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4); }
-            70% { box-shadow: 0 0 0 10px rgba(220, 38, 38, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
-        }
-        .needs-update-cue {
-            animation: cue-pulse 1.5s infinite;
-            border: 3px solid #d90000; /* Red border to indicate required action */
-            transform: scale(1.02);
-        }
-
-        /* --- START CUSTOM SLIDER STYLING (Modern Filled-Track UX) --- */
-        input[type=range] {
-            -webkit-appearance: none;
-            width: 100%;
-            background: transparent; /* Required for custom track styling */
-            margin: 10px 0;
-        }
-
-        /* Track styling (Chrome/Safari/Firefox) - Added border-radius to ensure rounded ends */
-        input[type=range]::-webkit-slider-runnable-track,
-        input[type=range]::-moz-range-track {
-            width: 100%;
-            height: 8px; /* Slightly thicker track */
-            cursor: pointer;
-            background: #d1d5db; /* Default gray track. Will be overwritten by JS linear-gradient */
-            border-radius: 4px; /* Ensured rounded ends */
-            box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
-        }
-
-        /* Thumb styling (Chrome/Safari) - Prominent Blue Thumb */
-        input[type=range]::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            height: 24px;
-            width: 24px;
-            border-radius: 50%;
-            background: #0077b6; /* Powerball Blue thumb */
-            cursor: grab;
-            margin-top: -8px; /* Adjust vertical position for 8px track */
-            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-            border: 3px solid #ffffff; /* White border for contrast */
-            transition: background 0.2s, box-shadow 0.2s;
-        }
-
-        input[type=range]:active::-webkit-slider-thumb {
-            cursor: grabbing;
-            background: #005f99; /* Darker blue when active */
-            box-shadow: 0 2px 10px rgba(217, 0, 0, 0.5); /* Red hint when dragging */
-        }
-
-        /* Thumb styling (Firefox) - Prominent Blue Thumb */
-        input[type=range]::-moz-range-thumb {
-            height: 24px;
-            width: 24px;
-            border-radius: 50%;
-            background: #0077b6; /* Powerball Blue thumb */
-            cursor: grab;
-            border: 3px solid #ffffff;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-        }
-        /* --- END CUSTOM SLIDER STYLING --- */
-    </style>
-</head>
-<body class="p-4 sm:p-8">
-
-<div class="dashboard-container max-w-7xl mx-auto bg-white p-6 sm:p-10 rounded-xl">
-    <h1 class="text-3xl font-extrabold mb-2 text-center">Powerball Predictive Dashboard </h1>
-
-    <!-- INTERACTIVE CONTROLS SECTION -->
-    <div class="mb-8 p-4 bg-yellow-50 rounded-xl border border-yellow-200">
-        <h2 class="text-xl font-semibold mb-4 text-center text-yellow-800">🔮 Predict the Next Winning Numbers</h2>
-        
-        <!-- 1. Draw Count Slider (Enhanced with filled track) -->
-        <div class="mb-6">
-            <label for="drawCountSlider" class="block text-lg font-medium text-gray-700 mb-4 text-center">
-                Move the slider to select # of previous draws to analyze: 
-                <span id="sliderValue" class="text-red-600 font-extrabold text-2xl">87</span>
-            </label>
-            
-            <div class="relative px-2">
-                <input type="range" id="drawCountSlider" min="10" max="87" value="87" step="1" class="w-full">
-            </div>
-        </div>
-
-        <!-- 2. Prediction Generator -->
-        <div class="flex flex-col sm:flex-row items-center justify-center gap-4 border-t pt-4 mt-4">
-            <button id="generateTicketBtn" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-6 rounded-lg shadow-lg transition duration-200 flex items-center justify-center w-full sm:w-auto pulse-button">
-                 Predict
-            </button>
-            <div id="suggestedTicketOutput" class="mt-4 sm:mt-0 p-3 bg-gray-100 rounded-lg text-center w-full sm:w-auto min-h-[50px] flex items-center justify-center text-gray-700">
-                Next Winning Numbers!
-            </div>
-        </div>
-        <!-- Analysis info text moved and shortened here -->
-        <p id="analysisPeriodInfo" class="text-center text-gray-500 mt-4 text-sm"></p>
-    </div>
-    <!-- END INTERACTIVE CONTROLS SECTION -->
-
-
-    <!-- 1. Frequency Analysis (Heatmap) - Full Width -->
-    <div class="p-6 rounded-lg border border-gray-100 mb-6">
-        <h2 class="text-2xl font-semibold mb-4 text-center">1. Number Frequency Analysis (Heatmap)</h2>
-        <div class="flex justify-center items-center gap-4 text-sm font-medium mb-6">
-            <span class="text-gray-600">Cold 🧊 (Low Opacity)</span>
-            <div class="h-2 w-32 rounded-full" style="background: linear-gradient(to right, #e0f2f1, #0077b6);"></div>
-            <span class="text-gray-600">Hot 🔥 (High Opacity)</span>
-        </div>
-
-        <h3 class="text-xl font-medium text-center text-gray-700 mb-3">White Balls (1-69)</h3>
-        <div id="whiteBallHeatmap" class="grid white-ball-grid gap-2 p-2 bg-blue-50 rounded-lg">
-            <!-- White Ball Cells Rendered Here -->
-        </div>
-        
-        <h3 class="text-xl font-medium text-center text-gray-700 mt-8 mb-3">Powerballs (1-26)</h3>
-        <div id="powerBallHeatmap" class="grid powerball-grid gap-2 p-2 bg-red-50 rounded-lg">
-            <!-- Powerball Cells Rendered Here -->
-        </div>
-
-    </div>
-
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
-        <!-- 2. Gaps/Recency Analysis -->
-        <div class="p-6 rounded-lg border border-gray-100">
-            <h2 class="text-2xl font-semibold mb-4 text-center">2. Recency Analysis (Draws Since Last Seen)</h2>
-            <p class="text-center text-sm text-gray-500 mb-4">Top 10 Coldest Numbers Overall (Highest Draws Ago)</p>
-            <div id="recencyTable"></div>
-        </div>
-
-        <!-- 3. Pair/Combination Analysis -->
-        <div class="p-6 rounded-lg border border-gray-100">
-            <h2 class="text-2xl font-semibold mb-4 text-center">3. Top 10 White Ball Pairs</h2>
-            <p class="text-center text-sm text-gray-500 mb-4">Most frequently drawn pairs</p>
-            <div id="pairAnalysisTable"></div>
-        </div>
-    </div>
-</div>
-
-<script>
-    // --------------------------------------------------------------------------------
-    // STEP 1: EMBEDDED DATA (Last 87 Draws: Nov 2, 2024 - Jul 16, 2025)
-    // Draw data is formatted as: [Draw Date, W1, W2, W3, W4, W5, Powerball]
-    // --------------------------------------------------------------------------------
-    const rawData = [
-        ["11/02/2024", 22, 34, 40, 52, 60, 15], ["11/04/2024", 1, 19, 28, 33, 56, 12], ["11/06/2024", 10, 11, 23, 44, 58, 26], 
-        ["11/09/2024", 14, 15, 29, 39, 41, 18], ["11/11/2024", 5, 20, 26, 47, 51, 9], ["11/13/2024", 3, 17, 30, 48, 62, 21], 
-        ["11/16/2022", 16, 24, 35, 43, 63, 7], ["11/18/2024", 8, 12, 27, 32, 59, 11], ["11/20/2024", 2, 9, 36, 45, 66, 1], 
-        ["11/23/2024", 13, 21, 31, 46, 67, 24], ["11/25/2024", 7, 18, 25, 38, 54, 4], ["11/27/2024", 6, 22, 37, 49, 68, 16], 
-        ["11/30/2024", 4, 10, 17, 26, 50, 23], ["12/02/2024", 1, 14, 28, 41, 52, 5], ["12/04/2024", 15, 20, 33, 44, 56, 19], 
-        ["12/07/2024", 11, 23, 34, 55, 60, 20], ["12/09/2024", 3, 16, 29, 39, 47, 12], ["12/11/2024", 8, 13, 30, 48, 62, 17], 
-        ["12/14/2024", 2, 17, 32, 53, 58, 10], ["12/16/2024", 9, 18, 27, 40, 63, 26], ["12/18/2024", 4, 19, 36, 45, 66, 15], 
-        ["12/21/2024", 7, 21, 31, 46, 67, 1], ["12/23/2024", 6, 22, 35, 50, 68, 24], ["12/25/2024", 10, 15, 25, 37, 54, 4], 
-        ["12/28/2024", 1, 12, 14, 41, 51, 16], ["12/30/2024", 11, 20, 28, 44, 57, 23], ["01/01/2025", 16, 23, 33, 52, 60, 5], 
-        ["01/04/2025", 3, 13, 29, 39, 47, 19], ["01/06/2025", 8, 17, 30, 48, 62, 20], ["01/08/2025", 2, 18, 32, 53, 59, 12], 
-        ["01/11/2025", 9, 19, 27, 40, 64, 7], ["01/13/2025", 4, 21, 36, 46, 66, 11], ["01/15/2025", 7, 22, 31, 50, 67, 15], 
-        ["01/18/2025", 6, 24, 35, 49, 68, 1], ["01/20/2025", 10, 15, 25, 37, 55, 24], ["01/22/2025", 1, 12, 14, 41, 51, 4], 
-        ["01/25/2025", 11, 20, 28, 44, 57, 16], ["01/27/2025", 16, 23, 33, 52, 60, 23], ["01/29/2025", 3, 13, 29, 39, 47, 5], 
-        ["02/01/2025", 8, 17, 30, 48, 62, 19], ["02/03/2025", 2, 18, 32, 53, 59, 20], ["02/05/2025", 9, 19, 27, 40, 64, 12], 
-        ["02/08/2025", 4, 21, 36, 46, 66, 7], ["02/10/2025", 7, 22, 31, 50, 67, 11], ["02/12/2025", 6, 24, 35, 49, 68, 15], 
-        ["02/15/2025", 10, 15, 25, 37, 55, 1], ["02/17/2025", 1, 12, 14, 41, 51, 24], ["02/19/2025", 11, 20, 28, 44, 57, 4], 
-        ["02/22/2025", 16, 23, 33, 52, 60, 16], ["02/24/2025", 3, 13, 29, 39, 47, 23], ["02/26/2025", 8, 17, 30, 48, 62, 5], 
-        ["03/01/2025", 2, 18, 32, 53, 59, 19], ["03/03/2025", 9, 19, 27, 40, 64, 20], ["03/05/2025", 4, 21, 36, 46, 66, 12], 
-        ["03/08/2025", 7, 22, 31, 50, 67, 7], ["03/10/2025", 6, 24, 35, 49, 68, 11], ["03/12/2025", 10, 15, 25, 37, 55, 15], 
-        ["03/15/2025", 1, 12, 14, 41, 51, 1], ["03/17/2025", 11, 20, 28, 44, 57, 24], ["03/19/2025", 16, 23, 33, 52, 60, 4], 
-        ["03/22/2025", 3, 13, 29, 39, 47, 16], ["03/24/2025", 8, 17, 30, 48, 62, 23], ["03/26/2025", 2, 18, 32, 53, 59, 5], 
-        ["03/29/2025", 9, 19, 27, 40, 64, 19], ["03/31/2025", 4, 21, 36, 46, 66, 20], ["04/02/2025", 7, 22, 31, 50, 67, 12], 
-        ["04/05/2025", 6, 24, 35, 49, 68, 7], ["04/07/2025", 10, 15, 25, 37, 55, 11], ["04/09/2025", 1, 12, 14, 41, 51, 15], 
-        ["04/12/2025", 11, 20, 28, 44, 57, 1], ["04/14/2025", 16, 23, 33, 52, 60, 24], ["04/16/2025", 3, 13, 29, 39, 47, 4], 
-        ["04/19/2025", 8, 17, 30, 48, 62, 16], ["04/21/2025", 2, 18, 32, 53, 59, 23], ["04/23/2025", 9, 19, 27, 40, 64, 5], 
-        ["04/26/2025", 4, 21, 36, 46, 66, 19], ["04/28/2025", 7, 22, 31, 50, 67, 20], ["04/30/2025", 6, 24, 35, 49, 68, 12], 
-        ["05/03/2025", 10, 15, 25, 37, 55, 7], ["05/05/2025", 1, 12, 14, 41, 51, 11], ["05/07/2025", 11, 20, 28, 44, 57, 15], 
-        ["05/10/2025", 16, 23, 33, 52, 60, 1], ["05/12/2025", 3, 13, 29, 39, 47, 24], ["05/14/2025", 8, 17, 30, 48, 62, 4], 
-        ["05/17/2025", 2, 18, 32, 53, 59, 16], ["05/19/2025", 9, 19, 27, 40, 64, 23], ["05/21/2025", 4, 21, 36, 46, 66, 5], 
-        ["05/24/2025", 7, 22, 31, 50, 67, 19], ["05/26/2025", 6, 24, 35, 49, 68, 20], ["05/28/2025", 10, 15, 25, 37, 55, 12], 
-        ["05/31/2025", 1, 12, 14, 41, 51, 7], ["06/02/2025", 11, 20, 28, 44, 57, 11], ["06/04/2025", 16, 23, 33, 52, 60, 15], 
-        ["06/07/2025", 3, 13, 29, 39, 47, 1], ["06/09/2025", 8, 17, 30, 48, 62, 24], ["06/11/2025", 2, 18, 32, 53, 59, 4], 
-        ["06/14/2025", 9, 19, 27, 40, 64, 16], ["06/16/2025", 4, 21, 36, 46, 66, 23], ["06/18/2025", 7, 22, 31, 50, 67, 5], 
-        ["06/21/2025", 6, 24, 35, 49, 68, 19], ["06/23/2025", 10, 15, 25, 37, 55, 20], ["06/25/2025", 1, 12, 14, 41, 51, 12], 
-        ["06/28/2025", 11, 20, 28, 44, 57, 7], ["06/30/2025", 16, 23, 33, 52, 60, 11], ["07/02/2025", 3, 13, 29, 39, 47, 15], 
-        ["07/05/2025", 8, 17, 30, 48, 62, 1], ["07/07/2025", 2, 18, 32, 53, 59, 24], ["07/09/2025", 9, 19, 27, 40, 64, 4], 
-        ["07/12/2025", 4, 21, 36, 46, 66, 16], ["07/14/2025", 7, 22, 31, 50, 67, 23], ["07/16/2025", 6, 24, 35, 49, 68, 5]
-    ];
-    // Reverse the data so the most recent draws are at the start (index 0)
-    const reversedRawData = rawData.reverse();
-    const maxDraws = reversedRawData.length; 
-    let currentDrawCount = maxDraws; // Start with all draws
-
-    // --------------------------------------------------------------------------------
-    // UTILITY: SLIDER TRACK VISUAL UPDATE
-    // --------------------------------------------------------------------------------
-
-    /**
-     * Updates the background of the range slider to visually fill the track
-     * up to the current thumb position using a CSS linear gradient.
-     */
-    function updateSliderBackground(slider) {
-        const min = parseInt(slider.min) || 0;
-        const max = parseInt(slider.max) || 100;
-        const val = parseInt(slider.value);
-        
-        // Calculate percentage value for the background gradient
-        const percentage = ((val - min) / (max - min)) * 100;
-
-        const fill = '#0077b6'; // Powerball Blue for the fill
-        const track = '#d1d5db'; // Light gray for the un-filled track
-
-        // Apply linear gradient: fill color up to percentage, then track color
-        slider.style.background = `linear-gradient(to right, ${fill} 0%, ${fill} ${percentage}%, ${track} ${percentage}%, ${track} 100%)`;
-    }
-
-    // --------------------------------------------------------------------------------
-    // STEP 2: CALCULATIONS AND DATA PROCESSING
-    // --------------------------------------------------------------------------------
-
-    let currentStats = {}; // Global object to hold current analysis results
-
-    function calculateStatistics(dataSubset) {
-        const totalDraws = dataSubset.length;
-        const whiteBallRange = Array.from({length: 69}, (_, i) => i + 1);
-        const powerBallRange = Array.from({length: 26}, (_, i) => i + 1);
-        const allNumbers = [...whiteBallRange, ...powerBallRange];
-
-        let frequency = new Map();
-        let recency = new Map();
-        let pairCounts = new Map();
-
-        // Initialize frequency & recency
-        allNumbers.forEach(n => frequency.set(n, 0));
-        let lastSeenDraw = new Map();
-        allNumbers.forEach(n => lastSeenDraw.set(n, -1));
-
-        // Process draws
-        dataSubset.forEach((draw, drawIndex) => {
-            // Note: Draw is [Date, W1, W2, W3, W4, W5, Powerball]
-            const whiteBalls = draw.slice(1, 6).map(Number);
-            const powerBall = Number(draw[6]);
-            const winningNumbers = [...whiteBalls, powerBall];
-
-            winningNumbers.forEach(num => {
-                frequency.set(num, frequency.get(num) + 1);
-            });
-
-            winningNumbers.forEach(num => {
-                // Only update if it's the first time seeing it in this *subset* of data
-                if (lastSeenDraw.get(num) === -1) {
-                    lastSeenDraw.set(num, drawIndex);
-                }
-            });
-
-            // Pair counting (only for White Balls)
-            for (let i = 0; i < whiteBalls.length; i++) {
-                for (let j = i + 1; j < whiteBalls.length; j++) {
-                    const pair = [whiteBalls[i], whiteBalls[j]].sort((a, b) => a - b);
-                    const pairKey = pair.join('-');
-                    pairCounts.set(pairKey, (pairCounts.get(pairKey) || 0) + 1);
-                }
-            }
+    draws.forEach(draw => {
+        // Main Numbers (1-69)
+        draw.numbers.forEach(num => {
+            mainCounts[num] = (mainCounts[num] || 0) + 1;
         });
 
-        // Calculate Recency (Draws Ago)
-        for (const num of allNumbers) {
-            const lastSeenIndex = lastSeenDraw.get(num);
-            if (lastSeenIndex === -1) {
-                // If never seen in this draw subset
-                recency.set(num, totalDraws);
-            } else {
-                // Draws ago = index of the draw it was seen in
-                recency.set(num, lastSeenIndex);
-            }
-        }
-
-        const frequencyData = Array.from(frequency, ([num, count]) => ({
-            num: num,
-            count: count,
-            isWhiteBall: num <= 69
-        }));
-
-        const recencyData = Array.from(recency, ([num, drawsAgo]) => ({
-            num: num,
-            drawsAgo: drawsAgo,
-            isWhiteBall: num <= 69
-        })).sort((a, b) => b.drawsAgo - a.drawsAgo); // Sort by Coldest (highest drawsAgo)
-
-        const pairData = Array.from(pairCounts, ([pair, count]) => ({
-            pair: pair,
-            count: count
-        })).sort((a, b) => {
-            if (b.count !== a.count) return b.count - a.count;
-            return Number(a.pair.split('-')[0]) - Number(b.pair.split('-')[0]);
-        });
-
-        // Store results globally
-        currentStats = { frequencyData, recencyData, pairData, totalDraws };
-        return currentStats;
-    }
-
-    // --------------------------------------------------------------------------------
-    // STEP 3: RENDER VISUALIZATIONS
-    // --------------------------------------------------------------------------------
-
-    // 1. Render Frequency Heatmap
-    function renderFrequencyHeatmap(stats) {
-        const { frequencyData } = stats;
-        const frequencyMap = new Map(frequencyData.map(d => [d.num, d.count]));
-        
-        const whiteBalls = frequencyData.filter(d => d.isWhiteBall);
-        const powerBalls = frequencyData.filter(d => !d.isWhiteBall);
-
-        const maxWhiteFreq = Math.max(...whiteBalls.map(d => d.count)) || 1;
-        const maxPowerFreq = Math.max(...powerBalls.map(d => d.count)) || 1;
-
-        const whiteBallContainer = document.getElementById('whiteBallHeatmap');
-        const powerBallContainer = document.getElementById('powerBallHeatmap');
-
-        // Function to determine CSS style based on frequency count
-        const getColorStyle = (num, maxFreq, isPowerball) => {
-            const count = frequencyMap.get(num) || 0;
-            if (count === 0) {
-                return `background-color: #e5e7eb; color: #9ca3af; opacity: 1;`;
-            }
-
-            // Normalize count (0.3 to 1.0)
-            const normalized = count / maxFreq;
-            const opacity = 0.3 + (0.7 * normalized); 
-
-            const baseColor = isPowerball ? 'rgb(217, 0, 0)' : 'rgb(0, 119, 182)';
-            
-            return `background-color: ${baseColor}; opacity: ${opacity}; color: white;`;
-        };
-
-        // Render White Balls (1-69)
-        let whiteHtml = '';
-        for (let i = 1; i <= 69; i++) {
-            const count = frequencyMap.get(i) || 0;
-            const style = getColorStyle(i, maxWhiteFreq, false);
-            const tooltip = `Drawn: ${count} times`;
-            whiteHtml += `<div class="heat-cell border-2 border-white" style="${style}">
-                            <span>${i}</span>
-                            <div class="tooltip">${tooltip}</div>
-                          </div>`;
-        }
-        whiteBallContainer.innerHTML = whiteHtml;
-        
-        // Render Powerballs (1-26)
-        let powerHtml = '';
-        for (let i = 1; i <= 26; i++) {
-            const count = frequencyMap.get(i) || 0;
-            const style = getColorStyle(i, maxPowerFreq, true);
-            const tooltip = `Drawn: ${count} times`;
-            powerHtml += `<div class="heat-cell border-2 border-white" style="${style}">
-                            <span>${i}</span>
-                            <div class="tooltip">${tooltip}</div>
-                          </div>`;
-        }
-        powerBallContainer.innerHTML = powerHtml;
-    }
-
-    // 2. Render Recency Table (Top 10 Coldest Numbers)
-    function renderRecencyTable(stats) {
-        const tableContainer = document.getElementById('recencyTable');
-        // Filter out numbers that were never drawn (drawsAgo === totalDraws) before showing top 10
-        const relevantRecencyData = stats.recencyData.filter(item => item.drawsAgo < stats.totalDraws);
-        const top10Coldest = relevantRecencyData.slice(0, 10);
-
-        let html = '<table class="w-full text-left text-sm text-gray-700 rounded-lg overflow-hidden border border-gray-200">';
-        html += '<thead class="text-xs text-white uppercase bg-blue-700"><tr><th scope="col" class="px-6 py-3 rounded-tl-lg">Rank</th><th scope="col" class="px-6 py-3">Number</th><th scope="col" class="px-6 py-3">Type</th><th scope="col" class="px-6 py-3 rounded-tr-lg">Draws Ago</th></tr></thead><tbody>';
-
-        top10Coldest.forEach((item, index) => {
-            const typeClass = item.isWhiteBall ? 'white-ball-num' : 'powerball-num';
-            html += `<tr class="bg-white border-b hover:bg-gray-50">
-                <td class="px-6 py-4 font-medium text-gray-900">${index + 1}</td>
-                <td class="px-6 py-4"><strong>${item.num}</strong></td>
-                <td class="px-6 py-4"><span class="${typeClass}">${item.isWhiteBall ? 'White' : 'Power'}</span></td>
-                <td class="px-6 py-4">${item.drawsAgo}</td>
-            </tr>`;
-        });
-
-        html += '</tbody></table>';
-        tableContainer.innerHTML = html;
-        if (relevantRecencyData.length === 0) {
-            tableContainer.innerHTML = `<p class="text-center text-gray-500 mt-4">All numbers have been drawn recently in this period.</p>`;
-        }
-    }
-
-    // 3. Render Pair Analysis Table (Top 10 Pairs)
-    function renderPairAnalysisTable(stats) {
-        const tableContainer = document.getElementById('pairAnalysisTable');
-        const top10Pairs = stats.pairData.slice(0, 10);
-
-        let html = '<table class="w-full text-left text-sm text-gray-700 rounded-lg overflow-hidden border border-gray-200">';
-        html += '<thead class="text-xs text-white uppercase bg-blue-700"><tr><th scope="col" class="px-6 py-3 rounded-tl-lg">Rank</th><th scope="col" class="px-6 py-3">Pair</th><th scope="col" class="px-6 py-3 rounded-tr-lg">Times Drawn</th></tr></thead><tbody>';
-
-        top10Pairs.forEach((item, index) => {
-            html += `<tr class="bg-white border-b hover:bg-gray-50">
-                <td class="px-6 py-4 font-medium text-gray-900">${index + 1}</td>
-                <td class="px-6 py-4"><strong>${item.pair.replace('-', ' & ')}</strong></td>
-                <td class="px-6 py-4">${item.count}</td>
-            </tr>`;
-        });
-
-        html += '</tbody></table>';
-        tableContainer.innerHTML = html;
-        if (top10Pairs.length === 0) {
-            tableContainer.innerHTML = `<p class="text-center text-gray-500 mt-4">No common pairs found for analysis period.</p>`;
-        }
-    }
-
-    // --------------------------------------------------------------------------------
-    // STEP 4: PREDICTION LOGIC (Suggested Ticket Generator)
-    // --------------------------------------------------------------------------------
-
-    function generateSuggestedTicket() {
-        const generateBtn = document.getElementById('generateTicketBtn');
-        const outputDiv = document.getElementById('suggestedTicketOutput');
-
-        // Remove the visual cue as the prediction is being processed
-        generateBtn.classList.remove('needs-update-cue');
-        
-        // Start calculation (Analysis data has already been updated in initDashboard)
-        const { frequencyData, recencyData } = currentStats;
-
-        // 1. Separate White Balls (WB) and Powerballs (PB)
-        const wbFrequency = frequencyData.filter(d => d.isWhiteBall);
-        const pbFrequency = frequencyData.filter(d => !d.isWhiteBall);
-        const wbRecency = recencyData.filter(d => d.isWhiteBall && d.drawsAgo < currentStats.totalDraws); // Coldest WB (drawn at least once)
-        const pbRecency = recencyData.filter(d => !d.isWhiteBall && d.drawsAgo < currentStats.totalDraws); // Coldest PB (drawn at least once)
-
-        // Sort WB by frequency (Hottest)
-        const wbHottest = [...wbFrequency].sort((a, b) => b.count - a.count);
-
-        let suggestedWB = new Set();
-        
-        // Strategy: 2 Coldest, 2 Hottest, 1 Balanced/Random (Aim for 3:2 or 2:3 Odd/Even split)
-
-        // A. Pick Coldest Numbers (Recency)
-        let coldPicks = 0;
-        for (const item of wbRecency) {
-            if (suggestedWB.size < 2) {
-                if (!suggestedWB.has(item.num)) {
-                    suggestedWB.add(item.num);
-                    coldPicks++;
-                }
-            } else {
-                break;
-            }
-        }
-        
-        // B. Pick Hottest Numbers (Frequency)
-        let hotPicks = 0;
-        for (const item of wbHottest) {
-            if (suggestedWB.size < 4) {
-                if (!suggestedWB.has(item.num)) {
-                    suggestedWB.add(item.num);
-                    hotPicks++;
-                }
-            } else {
-                break;
-            }
-        }
-
-        // C. Fill remaining spots, prioritizing Odd/Even balance
-        while (suggestedWB.size < 5) {
-            // Get all available White Balls
-            const availableWBs = wbFrequency.map(d => d.num).filter(num => !suggestedWB.has(num));
-
-            // Calculate current Odd/Even counts
-            const oddCount = Array.from(suggestedWB).filter(n => n % 2 !== 0).length;
-            
-            let preferredNum = null;
-            
-            // Look for a number that balances the split (aim for 3/2 or 2/3)
-            const targetIsOdd = (oddCount <= (suggestedWB.size - oddCount));
-
-            const balanceCandidates = availableWBs.filter(num => (num % 2 !== 0) === targetIsOdd);
-            
-            if (balanceCandidates.length > 0) {
-                // Pick a random balanced candidate
-                preferredNum = balanceCandidates[Math.floor(Math.random() * balanceCandidates.length)];
-            } else if (availableWBs.length > 0) {
-                 // Fallback: pick any random available number
-                preferredNum = availableWBs[Math.floor(Math.random() * availableWBs.length)];
-            }
-
-            if (preferredNum) {
-                suggestedWB.add(preferredNum);
-            } else {
-                // If the loop continues but no numbers are available (shouldn't happen), break
-                break;
-            }
-        }
-
-        const finalWB = Array.from(suggestedWB).sort((a, b) => a - b);
-        
-        // 2. Powerball Pick: Take the absolute Coldest Powerball (highest draws ago)
-        let finalPB;
-        
-        if (pbRecency.length > 0) {
-            // Option 1: Pick the Coldest PB that has been drawn in the period
-            finalPB = pbRecency[0].num;
-        } else if (pbFrequency.length > 0) {
-            // Option 2: Fallback to a random PB from the frequency list (safe, as the list contains all 26 PBs)
-            finalPB = pbFrequency[Math.floor(Math.random() * pbFrequency.length)].num;
-        } else {
-            // Option 3: Absolute safety fallback (should only happen if data is empty or corrupted)
-            finalPB = Math.floor(Math.random() * 26) + 1;
-        }
-
-
-        // 3. Render Output
-        
-        const wbHtml = finalWB.map(n => `<span class="ball-display wb-ball">${n}</span>`).join('');
-        const pbHtml = `<span class="ball-display pb-ball">${finalPB}</span>`;
-        
-        outputDiv.innerHTML = `
-            <div class="flex flex-wrap justify-center items-center gap-2">
-                ${wbHtml}
-                <span class="mx-2 text-xl font-bold text-red-600">+</span>
-                ${pbHtml}
-            </div>
-        `;
-    }
-
-    // --------------------------------------------------------------------------------
-    // STEP 5: INITIALIZATION AND EVENT LISTENERS
-    // --------------------------------------------------------------------------------
-
-    // Main function to initialize or update the dashboard
-    function initDashboard(drawCount, updateAnalysis = true) {
-        const slider = document.getElementById('drawCountSlider');
-        
-        // Ensure drawCount is within limits
-        const actualDrawCount = Math.min(Math.max(10, drawCount), maxDraws);
-        currentDrawCount = actualDrawCount;
-
-        // 1. Get the relevant data subset (most recent 'actualDrawCount' draws)
-        const dataSubset = reversedRawData.slice(0, actualDrawCount);
-
-        // 2. Recalculate all statistics (Analysis)
-        const stats = calculateStatistics(dataSubset);
-
-        // 3. Update UI text
-        document.getElementById('sliderValue').textContent = actualDrawCount;
-        
-        const startDate = dataSubset.length > 0 ? dataSubset[dataSubset.length - 1][0] : 'N/A';
-        const endDate = dataSubset.length > 0 ? dataSubset[0][0] : 'N/A';
-        
-        document.getElementById('analysisPeriodInfo').textContent = `Analysis of the last ${actualDrawCount} draws (Dates: ${startDate} - ${endDate}).`;
-
-
-        // 4. Render all sections
-        renderFrequencyHeatmap(stats);
-        renderRecencyTable(stats);
-        renderPairAnalysisTable(stats);
-        
-        // 5. Update slider visual
-        updateSliderBackground(slider);
-    }
-
-
-    document.addEventListener('DOMContentLoaded', () => {
-        const slider = document.getElementById('drawCountSlider');
-        const generateBtn = document.getElementById('generateTicketBtn');
-        const outputDiv = document.getElementById('suggestedTicketOutput');
-        
-        // Set up the slider properties
-        slider.setAttribute('max', maxDraws);
-        slider.value = maxDraws; // Default to all available draws
-
-        // Event Listener for the slider (Input fires continuously during drag)
-        slider.addEventListener('input', (event) => {
-            const newCount = parseInt(event.target.value, 10);
-            
-            // 1. Only update the slider label and background on input
-            document.getElementById('sliderValue').textContent = newCount;
-            updateSliderBackground(slider);
-            
-            // 2. Add visual cue to the button
-            generateBtn.classList.add('needs-update-cue');
-            
-            // 3. Reset the prediction output to prompt the user
-            outputDiv.innerHTML = 'Analysis updated. Click Predict!';
-            
-            // 4. Update the core analysis data immediately, without re-rendering prediction
-            // This makes the heatmaps and tables update live, but keeps the prediction a separate click.
-            const dataSubset = reversedRawData.slice(0, newCount);
-            calculateStatistics(dataSubset);
-            
-            // Update the period info text as well
-            const startDate = dataSubset.length > 0 ? dataSubset[dataSubset.length - 1][0] : 'N/A';
-            const endDate = dataSubset.length > 0 ? dataSubset[0][0] : 'N/A';
-            document.getElementById('analysisPeriodInfo').textContent = `Analysis of the last ${newCount} draws (Dates: ${startDate} - ${endDate}).`;
-            
-            renderFrequencyHeatmap(currentStats);
-            renderRecencyTable(currentStats);
-            renderPairAnalysisTable(currentStats);
-        });
-
-        // Event Listener for the prediction button (Click)
-        generateBtn.addEventListener('click', () => {
-             // 1. Remove the visual cue
-            generateBtn.classList.remove('needs-update-cue');
-            
-            // 2. Generate the ticket based on the CURRENT analysis data
-            generateSuggestedTicket();
-        });
-
-        // Initial load of the dashboard (with max draws)
-        initDashboard(maxDraws);
-        
-        // Initial button pulse cue (removed after first click)
-        generateBtn.classList.add('pulse-button');
+        // Powerball Number (1-26)
+        // FIX: Changed 'draw.powerballCounts' to the local variable 'powerballCounts'
+        powerballCounts[draw.powerball] = (powerballCounts[draw.powerball] || 0) + 1;
     });
 
-</script>
+    const mainFrequencies = Object.entries(mainCounts)
+        .map(([name, count]) => ({ name: parseInt(name, 10), count }))
+        .sort((a, b) => a.name - b.name); // Sort numerically
 
-</div>
-</body>
-</html>
+    const powerballFrequencies = Object.entries(powerballCounts)
+        .map(([name, count]) => ({ name: parseInt(name, 10), count }))
+        .sort((a, b) => a.name - b.name);
+
+    return { mainFrequencies, powerballFrequencies };
+};
+
+/**
+ * Calculates descriptive statistics for the sum of the 5 main numbers.
+ * @param {Array<{numbers: number[]}>} draws - The parsed draw data.
+ * @returns {{min: number, max: number, average: number, median: number}}
+ */
+const calculateSumStats = (draws) => {
+    const sums = draws.map(draw => draw.numbers.reduce((sum, num) => sum + num, 0));
+
+    if (sums.length === 0) return { min: 0, max: 0, average: 0, median: 0 };
+
+    sums.sort((a, b) => a - b);
+    const min = sums[0];
+    const max = sums[sums.length - 1];
+    const totalSum = sums.reduce((acc, s) => acc + s, 0);
+    const average = totalSum / sums.length;
+
+    const mid = Math.floor(sums.length / 2);
+    const median = sums.length % 2 === 0
+        ? (sums[mid - 1] + sums[mid]) / 2
+        : sums[mid];
+
+    return { min, max, average: parseFloat(average.toFixed(2)), median };
+};
+
+/**
+ * Calculates the total count of odd and even main numbers across all draws.
+ * @param {Array<{numbers: number[]}>} draws - The parsed draw data.
+ * @returns {{odd: number, even: number}}
+ */
+const calculateOddEvenSplit = (draws) => {
+    let oddCount = 0;
+    let evenCount = 0;
+
+    draws.forEach(draw => {
+        draw.numbers.forEach(num => {
+            if (num % 2 === 0) {
+                evenCount += 1;
+            } else {
+                oddCount += 1;
+            }
+        });
+    });
+
+    return { odd: oddCount, even: evenCount };
+};
+
+
+// --- React Component ---
+
+const App = () => {
+    const [drawData, setDrawData] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+    const CSV_FILE_PATH = 'Lottery_Powerball_Winning_Numbers__Beginning_2010.csv';
+
+    // 1. Data Fetching and Parsing Effect
+    useEffect(() => {
+        const fetchAndParseData = async () => {
+            try {
+                setLoading(true);
+                // The filename is now known to be available in the environment
+                const response = await fetch(CSV_FILE_PATH); 
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}. Make sure the file "${CSV_FILE_PATH}" is uploaded.`);
+                }
+                const csvText = await response.text();
+                const parsedData = parseCsvData(csvText);
+
+                if (parsedData.length === 0) {
+                    throw new Error("Could not parse any valid data from the CSV file. Check file format.");
+                }
+
+                setDrawData(parsedData);
+                setError(null);
+            } catch (err) {
+                console.error("Failed to load or parse data:", err);
+                setError(err.message || "Failed to load historical data. Check the console for details.");
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchAndParseData();
+    }, []);
+
+    // 2. Memoized Analysis Results
+    const { mainFrequencies, powerballFrequencies } = useMemo(() => {
+        return calculateFrequencies(drawData);
+    }, [drawData]);
+
+    const sumStats = useMemo(() => {
+        return calculateSumStats(drawData);
+    }, [drawData]);
+
+    const oddEvenSplit = useMemo(() => {
+        return calculateOddEvenSplit(drawData);
+    }, [drawData]);
+
+    // Calculate Average Frequency for the Reference Line
+    const totalDraws = drawData.length;
+    // 5 balls drawn per draw across all numbers (1-69)
+    const averageMainFrequency = totalDraws > 0 ? (totalDraws * 5) / 69 : 0; 
+    // 1 powerball drawn per draw across all powerball numbers (1-26)
+    const averagePowerballFrequency = totalDraws > 0 ? totalDraws / 26 : 0; 
+
+
+    // --- Components for Rendering ---
+
+    const StatsCard = ({ title, value, unit = '' }) => (
+        <div className="bg-white p-4 rounded-xl shadow-lg border border-gray-100 transition duration-300 hover:shadow-xl">
+            <p className="text-sm font-semibold text-gray-500">{title}</p>
+            <p className="text-3xl font-bold text-indigo-700 mt-1">{value} {unit}</p>
+        </div>
+    );
+
+    const FrequencyChart = ({ data, title, color, averageFrequency }) => (
+        <div className="w-full h-80 bg-white p-4 rounded-xl shadow-lg border border-gray-100">
+            <h3 className="text-lg font-bold text-gray-800 mb-4">{title} ({data.length} unique numbers)</h3>
+            <ResponsiveContainer width="100%" height="85%">
+                <BarChart data={data} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                    <XAxis dataKey="name" stroke="#333" interval="preserveStartEnd" tickLine={false} />
+                    <YAxis dataKey="count" stroke="#333" allowDecimals={false} tickLine={false} />
+                    <Tooltip
+                        contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+                        formatter={(value, name, props) => [`${value} Draws`, 'Frequency']}
+                    />
+                    <Bar dataKey="count" fill={color} radius={[4, 4, 0, 0]} />
+                    {averageFrequency > 0 && (
+                        <ReferenceLine 
+                            y={averageFrequency} 
+                            stroke="#EF4444" // Red color
+                            strokeDasharray="5 5"
+                            label={{ value: `Avg: ${averageFrequency.toFixed(1)}`, position: 'right', fill: '#EF4444' }} 
+                        />
+                    )}
+                </BarChart>
+            </ResponsiveContainer>
+        </div>
+    );
+
+    // --- Main Render Logic ---
+
+    if (loading) {
+        return (
+            <div className="flex items-center justify-center min-h-screen bg-gray-50">
+                <div className="text-xl font-medium text-indigo-600 p-8 rounded-xl shadow-2xl bg-white animate-pulse">
+                    Loading and Parsing Powerball Data from CSV...
+                </div>
+            </div>
+        );
+    }
+
+    if (error) {
+        return (
+            <div className="flex items-center justify-center min-h-screen bg-red-50">
+                <div className="text-center p-8 rounded-xl shadow-2xl bg-white">
+                    <h2 className="text-2xl font-bold text-red-600 mb-4">Data Error</h2>
+                    <p className="text-gray-700">{error}</p>
+                    <p className="text-sm text-gray-500 mt-4">Please ensure the file "{CSV_FILE_PATH}" is uploaded and correctly formatted.</p>
+                </div>
+            </div>
+        );
+    }
+
+
+    return (
+        <div className="min-h-screen bg-gray-50 font-sans p-4 sm:p-8">
+            <script src="https://cdn.tailwindcss.com"></script>
+            <style>{`
+                @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+                .font-sans { font-family: 'Inter', sans-serif; }
+            `}</style>
+
+            <header className="mb-8">
+                <h1 className="text-4xl font-extrabold text-gray-900 text-center mb-2">
+                    Powerball Data Analyzer
+                </h1>
+                <p className="text-center text-gray-600">
+                    Analysis based on {totalDraws} historical draws loaded from <code className="bg-gray-200 p-1 rounded-md text-sm">{CSV_FILE_PATH}</code>
+                </p>
+            </header>
+
+            {/* General Stats Section */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+                <StatsCard title="Total Draws Analyzed" value={totalDraws} />
+                <StatsCard title="Total White Balls Drawn" value={totalDraws * 5} />
+                <StatsCard title="Total Odd Numbers" value={oddEvenSplit.odd} />
+                <StatsCard title="Total Even Numbers" value={oddEvenSplit.even} />
+            </div>
+
+            {/* Sum Statistics Section */}
+            <h2 className="text-2xl font-bold text-gray-800 mb-4 border-b pb-2">Main Number Sum Statistics (5 Balls)</h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
+                <StatsCard title="Min Sum" value={sumStats.min} />
+                <StatsCard title="Max Sum" value={sumStats.max} />
+                <StatsCard title="Average Sum" value={sumStats.average} />
+                <StatsCard title="Median Sum" value={sumStats.median} />
+            </div>
+
+            {/* Frequency Charts Section */}
+            <h2 className="text-2xl font-bold text-gray-800 mb-4 border-b pb-2">Ball Frequency Distribution</h2>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <FrequencyChart
+                    title="Main Number Frequencies (1-69)"
+                    data={mainFrequencies}
+                    color="#4F46E5"
+                    averageFrequency={averageMainFrequency} // Added average line
+                />
+                <FrequencyChart
+                    title="Powerball Frequencies (1-26)"
+                    data={powerballFrequencies}
+                    color="#DC2626"
+                    averageFrequency={averagePowerballFrequency} // Added average line
+                />
+            </div>
+
+            <footer className="mt-12 text-center text-gray-500 text-sm">
+                <p>Data loaded successfully and analysis is complete.</p>
+            </footer>
+        </div>
+    );
+};
+
+export default App;
