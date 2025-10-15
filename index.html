@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'; // Added ReferenceLine
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 
 // --- Utility Functions for Data Analysis ---
 
@@ -56,7 +56,6 @@ const calculateFrequencies = (draws) => {
         });
 
         // Powerball Number (1-26)
-        // FIX: Changed 'draw.powerballCounts' to the local variable 'powerballCounts'
         powerballCounts[draw.powerball] = (powerballCounts[draw.powerball] || 0) + 1;
     });
 
@@ -169,6 +168,37 @@ const App = () => {
         return calculateOddEvenSplit(drawData);
     }, [drawData]);
 
+    // NEW: Calculate the date range of the currently analyzed data
+    const dateRange = useMemo(() => {
+        if (drawData.length === 0) return { earliest: 'N/A', latest: 'N/A' };
+        
+        // Convert 'MM/DD/YYYY' strings to Date objects for proper sorting/comparison
+        const dates = drawData
+            .map(d => {
+                const parts = d.date.split('/');
+                // Format as YYYY-MM-DD for reliable Date object creation
+                return new Date(`${parts[2]}-${parts[0]}-${parts[1]}`);
+            })
+            .sort((a, b) => a - b); // Sort ascending to find min/max
+
+        const earliestDate = dates[0];
+        const latestDate = dates[dates.length - 1];
+        
+        // Simple MM/DD/YYYY format for display
+        const formatDate = (date) => {
+            if (!date || isNaN(date.getTime())) return 'N/A';
+            const month = (date.getMonth() + 1).toString().padStart(2, '0');
+            const day = date.getDate().toString().padStart(2, '0');
+            const year = date.getFullYear();
+            return `${month}/${day}/${year}`;
+        };
+
+        return { 
+            earliest: formatDate(earliestDate), 
+            latest: formatDate(latestDate) 
+        };
+    }, [drawData]);
+
     // Calculate Average Frequency for the Reference Line
     const totalDraws = drawData.length;
     // 5 balls drawn per draw across all numbers (1-69)
@@ -250,7 +280,11 @@ const App = () => {
                     Powerball Data Analyzer
                 </h1>
                 <p className="text-center text-gray-600">
-                    Analysis based on {totalDraws} historical draws loaded from <code className="bg-gray-200 p-1 rounded-md text-sm">{CSV_FILE_PATH}</code>
+                    Analysis based on <span className="font-bold text-indigo-700">{totalDraws}</span> historical draws loaded from <code className="bg-gray-200 p-1 rounded-md text-sm">{CSV_FILE_PATH}</code>.
+                    <br/>
+                    <span className="text-sm text-gray-500">
+                        Data Range: <span className="font-semibold text-gray-700">{dateRange.earliest}</span> - <span className="font-semibold text-gray-700">{dateRange.latest}</span>
+                    </span>
                 </p>
             </header>
 
